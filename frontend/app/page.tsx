@@ -1,29 +1,48 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Upload, Lock, Users, Zap, Shield, Globe } from 'lucide-react';
 import { FileUploader } from '@/components/FileUploader';
 import { Button } from '@/components/ui/button';
+import { useAuthStore } from '@/lib/auth-store';
 
 export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
+  const { isAuthenticated, loadUser } = useAuthStore();
+
+  useEffect(() => {
+    loadUser();
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
       {/* Header */}
       <header className="border-b bg-white/80 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
+          <Link href="/" className="flex items-center space-x-2">
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
               <Upload className="w-5 h-5 text-white" />
             </div>
             <span className="text-2xl font-bold text-gray-900">FrameDrop</span>
-          </div>
+          </Link>
           <nav className="hidden md:flex items-center space-x-6">
             <a href="#features" className="text-gray-600 hover:text-gray-900">Features</a>
             <a href="#enterprise" className="text-gray-600 hover:text-gray-900">Enterprise</a>
-            <a href="/login" className="text-gray-600 hover:text-gray-900">Sign in</a>
-            <Button>Get Started</Button>
+            {isAuthenticated ? (
+              <Link href="/dashboard">
+                <Button>Dashboard</Button>
+              </Link>
+            ) : (
+              <>
+                <Link href="/login" className="text-gray-600 hover:text-gray-900">
+                  Sign in
+                </Link>
+                <Link href="/register">
+                  <Button>Get Started</Button>
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       </header>
