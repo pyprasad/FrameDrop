@@ -1,0 +1,306 @@
+// Prisma Schema for FrameDrop
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enum Definitions
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+  GUEST
+}
+
+enum TransferStatus {
+  UPLOADING
+  PROCESSING
+  ACTIVE
+  EXPIRED
+  DELETED
+}
+
+enum AuthProvider {
+  LOCAL
+  SAML
+  OAUTH
+  GOOGLE
+  AZURE_AD
+  OKTA
+}
+
+enum SubscriptionTier {
+  FREE
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  TRANSFER_CREATED
+  TRANSFER_DOWNLOADED
+  TRANSFER_DELETED
+  TRANSFER_EXPIRED
+  FILE_UPLOADED
+  FILE_DOWNLOADED
+  FILE_DELETED
+  ORG_CREATED
+  ORG_UPDATED
+  ORG_DELETED
+  SETTINGS_UPDATED
+  SSO_CONFIGURED
+}
+
+// Organizations (for Enterprise)
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+
+  // Branding
+  logo      String?
+  primaryColor String?
+
+  // Subscription & Limits
+  tier      SubscriptionTier @default(FREE)
+  maxStorageBytes BigInt @default(2147483648) // 2GB default
+  maxTransferSizeBytes BigInt @default(2147483648)
+
+  // SSO Configuration
+  ssoEnabled Boolean @default(false)
+  samlEntryPoint String?
+  samlIssuer String?
+  samlCert String?
+  oauthClientId String?
+  oauthClientSecret String?
+  authProvider AuthProvider @default(LOCAL)
+
+  // Settings
+  defaultTransferExpiryDays Int @default(7)
+  allowPasswordProtection Boolean @default(true)
+  requireAuthentication Boolean @default(false)
+
+  // Relationships
+  users     User[]
+  transfers Transfer[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+}
+
+// Users
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String?  // Null for SSO users
+  firstName String?
+  lastName  String?
+  avatar    String?
+
+  role      UserRole @default(USER)
+  authProvider AuthProvider @default(LOCAL)
+  ssoId     String?  // External SSO user ID
+
+  // Email verification
+  emailVerified Boolean @default(false)
+  verificationToken String?
+
+  // Password reset
+  resetToken String?
+  resetTokenExpiry DateTime?
+
+  // Organization
+  organizationId String?
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  // Usage tracking
+  usedStorageBytes BigInt @default(0)
+  transferCount Int @default(0)
+
+  // Relationships
+  transfers Transfer[]
+  downloads Download[]
+  auditLogs AuditLog[]
+
+  lastLoginAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([organizationId])
+  @@index([ssoId])
+}
+
+// Transfers (Main entity)
+model Transfer {
+  id        String   @id @default(uuid())
+  shortId   String   @unique // Short code for sharing (e.g., abc123)
+
+  // Sender info
+  senderName String?
+  senderEmail String?
+  userId    String?
+  user      User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Recipient info
+  recipientEmails String[] // Array of email addresses
+  message   String?
+
+  // Transfer settings
+  title     String?
+  password  String? // Hashed password if protected
+  downloadLimit Int? // Max number of downloads
+  downloadCount Int @default(0)
+
+  // Status and lifecycle
+  status    TransferStatus @default(UPLOADING)
+  expiresAt DateTime
+
+  // Size tracking
+  totalSizeBytes BigInt @default(0)
+
+  // Organization
+  organizationId String?
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  // Relationships
+  files     TransferFile[]
+  downloads Download[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shortId])
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([organizationId])
+}
+
+// Files within transfers
+model TransferFile {
+  id        String   @id @default(uuid())
+
+  // File metadata
+  filename  String
+  originalName String
+  mimeType  String
+  sizeBytes BigInt
+
+  // Storage location
+  s3Key     String   // Path in S3/MinIO
+  s3Bucket  String
+
+  // Checksums for integrity
+  md5Hash   String?
+  sha256Hash String?
+
+  // Upload tracking
+  uploadComplete Boolean @default(false)
+
+  // Relationships
+  transferId String
+  transfer  Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([transferId])
+  @@index([s3Key])
+}
+
+// Download tracking
+model Download {
+  id        String   @id @default(uuid())
+
+  // Transfer info
+  transferId String
+  transfer  Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  // Downloader info
+  userId    String?
+  user      User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Download metadata
+  ipAddress String?
+  userAgent String?
+  country   String?
+  city      String?
+
+  // Files downloaded (optional granular tracking)
+  filesDownloaded String[] // Array of file IDs
+
+  completedAt DateTime @default(now())
+
+  @@index([transferId])
+  @@index([userId])
+  @@index([completedAt])
+}
+
+// Audit logs for compliance
+model AuditLog {
+  id        String   @id @default(uuid())
+
+  action    AuditAction
+
+  // Actor
+  userId    String?
+  user      User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Context
+  organizationId String?
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  transferId String?
+  transfer  Transfer? @relation(fields: [transferId], references: [id], onDelete: SetNull)
+
+  // Details
+  metadata  Json? // Flexible field for additional context
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([transferId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// Email queue (for async email sending)
+model EmailQueue {
+  id        String   @id @default(uuid())
+
+  to        String[]
+  from      String
+  subject   String
+  template  String // Template name
+  data      Json   // Template variables
+
+  // Status
+  sent      Boolean @default(false)
+  sentAt    DateTime?
+  attempts  Int @default(0)
+  lastError String?
+
+  createdAt DateTime @default(now())
+
+  @@index([sent])
+  @@index([createdAt])
+}
